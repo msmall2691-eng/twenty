@@ -1,0 +1,315 @@
+// Maine Cleaning Company - Admin Dashboard
+// Prisma schema definition
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ── Clients ─────────────────────────────────────────────────────────────────
+model Client {
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  firstName   String
+  lastName    String
+  email       String   @unique
+  phone       String?
+  address     String?
+  city        String?
+  state       String   @default("ME")
+  zip         String?
+  notes       String?
+
+  // Relationships
+  intakeRequests IntakeRequest[]
+  quotes         Quote[]
+  jobs           Job[]
+
+  @@map("clients")
+}
+
+// ── Intake Requests (from WW.MaineCleaning.Company) ─────────────────────────
+model IntakeRequest {
+  id          String        @id @default(cuid())
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Contact info (may or may not match an existing client)
+  firstName   String
+  lastName    String
+  email       String
+  phone       String?
+  address     String?
+  city        String?
+  state       String        @default("ME")
+  zip         String?
+
+  // Service details
+  serviceType String        // "standard", "deep", "move-in-out", "commercial", etc.
+  frequency   String?       // "one-time", "weekly", "bi-weekly", "monthly"
+  bedrooms    Int?
+  bathrooms   Int?
+  sqft        Int?
+  preferredDate DateTime?
+  notes       String?
+
+  // Status tracking
+  status      IntakeStatus  @default(NEW)
+
+  // Link to client once converted
+  clientId    String?
+  client      Client?       @relation(fields: [clientId], references: [id])
+
+  // Link to quote once sent
+  quotes      Quote[]
+
+  @@map("intake_requests")
+}
+
+enum IntakeStatus {
+  NEW
+  REVIEWING
+  QUOTED
+  SCHEDULED
+  CLOSED
+}
+
+// ── Quotes ───────────────────────────────────────────────────────────────────
+model Quote {
+  id          String      @id @default(cuid())
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  quoteNumber String      @unique @default(cuid())
+
+  clientId    String
+  client      Client      @relation(fields: [clientId], references: [id])
+
+  intakeRequestId String?
+  intakeRequest   IntakeRequest? @relation(fields: [intakeRequestId], references: [id])
+
+  // Quote content
+  lineItems   QuoteLineItem[]
+  subtotal    Float       @default(0)
+  taxRate     Float       @default(0)
+  discount    Float       @default(0)
+  total       Float       @default(0)
+
+  notes       String?
+  validUntil  DateTime?
+
+  // Delivery
+  sentVia     String?     // "email" | "sms" | "both"
+  sentAt      DateTime?
+
+  status      QuoteStatus @default(DRAFT)
+
+  // Square integration
+  squareQuoteId String?
+
+  // Converted to job
+  jobs        Job[]
+
+  @@map("quotes")
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  VIEWED
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+model QuoteLineItem {
+  id          String  @id @default(cuid())
+  quoteId     String
+  quote       Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  description String
+  quantity    Float   @default(1)
+  unitPrice   Float
+  total       Float
+
+  @@map("quote_line_items")
+}
+
+// ── Templates ────────────────────────────────────────────────────────────────
+model Template {
+  id          String         @id @default(cuid())
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  name        String
+  type        TemplateType
+  subject     String?        // for email templates
+  body        String
+  variables   String?        // JSON array of variable names like ["clientName", "total"]
+
+  isDefault   Boolean        @default(false)
+
+  @@map("templates")
+}
+
+enum TemplateType {
+  QUOTE_EMAIL
+  QUOTE_SMS
+  INVOICE_EMAIL
+  INVOICE_SMS
+  REMINDER_EMAIL
+  REMINDER_SMS
+  FOLLOW_UP_EMAIL
+  WELCOME_EMAIL
+}
+
+// ── Jobs / Appointments ───────────────────────────────────────────────────────
+model Job {
+  id          String    @id @default(cuid())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  clientId    String
+  client      Client    @relation(fields: [clientId], references: [id])
+
+  quoteId     String?
+  quote       Quote?    @relation(fields: [quoteId], references: [id])
+
+  title       String
+  address     String?
+  scheduledAt DateTime
+  duration    Int       @default(120) // minutes
+  serviceType String
+
+  status      JobStatus @default(SCHEDULED)
+
+  notes       String?
+
+  // Assigned cleaners (JSON array of cleaner IDs)
+  assignedTo  String?   // JSON array
+
+  // Google Calendar
+  googleEventId String?
+
+  // ConnectTeam
+  connectTeamShiftId String?
+
+  // Invoice
+  invoices    Invoice[]
+
+  @@map("jobs")
+}
+
+enum JobStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+// ── Invoices ─────────────────────────────────────────────────────────────────
+model Invoice {
+  id            String        @id @default(cuid())
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  invoiceNumber String        @unique @default(cuid())
+
+  jobId         String
+  job           Job           @relation(fields: [jobId], references: [id])
+
+  subtotal      Float
+  taxRate       Float         @default(0)
+  discount      Float         @default(0)
+  total         Float
+  amountPaid    Float         @default(0)
+  balance       Float
+
+  dueDate       DateTime?
+  paidAt        DateTime?
+
+  status        InvoiceStatus @default(DRAFT)
+  notes         String?
+
+  // Square integration
+  squareInvoiceId String?
+  squareOrderId   String?
+
+  @@map("invoices")
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  VIEWED
+  PARTIAL
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+// ── Automations ───────────────────────────────────────────────────────────────
+model Automation {
+  id          String           @id @default(cuid())
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  name        String
+  description String?
+  isActive    Boolean          @default(true)
+
+  trigger     AutomationTrigger
+  conditions  String?          // JSON array of condition objects
+  actions     String           // JSON array of action objects
+
+  // Execution stats
+  runCount    Int              @default(0)
+  lastRunAt   DateTime?
+
+  logs        AutomationLog[]
+
+  @@map("automations")
+}
+
+enum AutomationTrigger {
+  INTAKE_RECEIVED
+  QUOTE_ACCEPTED
+  QUOTE_EXPIRED
+  JOB_SCHEDULED
+  JOB_COMPLETED
+  INVOICE_CREATED
+  INVOICE_OVERDUE
+  CLIENT_CREATED
+  MANUAL
+}
+
+model AutomationLog {
+  id           String     @id @default(cuid())
+  createdAt    DateTime   @default(now())
+
+  automationId String
+  automation   Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
+  status       String     // "success" | "error"
+  message      String?
+  data         String?    // JSON
+
+  @@map("automation_logs")
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
